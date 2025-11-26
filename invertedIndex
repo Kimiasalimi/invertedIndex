@@ -1,0 +1,352 @@
+
+
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <queue>
+#include <cctype>
+#include <algorithm>
+
+using namespace std;
+
+// ---------------------
+// Safe tokenizer
+// ---------------------
+vector<string> tokenize(const string& text) {
+    vector<string> tokens;
+    string token;
+    for (unsigned char uc : text) {
+        if (std::isalnum(uc)) {
+            token.push_back((char)std::tolower(uc));
+        }
+        else {
+            if (!token.empty()) {
+                tokens.push_back(token);
+                token.clear();
+            }
+        }
+    }
+    if (!token.empty()) tokens.push_back(token);
+    return tokens;
+}
+
+// ---------------------
+// Simple stemmer (rule-based)
+// ---------------------
+string simple_stem(const string& w_in) {
+    string w = w_in;
+    if (w.size() <= 2) return w;
+
+    // ies -> y
+    if (w.size() > 3 && w.substr(w.size() - 3) == "ies") {
+        return w.substr(0, w.size() - 3) + "y";
+    }
+    // ing
+    if (w.size() > 4 && w.substr(w.size() - 3) == "ing") {
+        string r = w.substr(0, w.size() - 3);
+        // handle doubled last char (running -> run)
+        if (r.size() >= 2 && r.back() == r[r.size() - 2]) r.pop_back();
+        return r;
+    }
+    // ed, ly
+    if (w.size() > 3) {
+        string suf2 = w.substr(w.size() - 2);
+        if (suf2 == "ed" || suf2 == "ly") return w.substr(0, w.size() - 2);
+    }
+    // trailing s (not for very short words)
+    if (w.size() > 3 && w.back() == 's') {
+        // avoid removing 'ss' endings like 'glass'
+        if (!(w.size() >= 2 && w[w.size() - 2] == 's')) {
+            return w.substr(0, w.size() - 1);
+        }
+    }
+    return w;
+}
+
+// ---------------------
+// Types for index
+// ---------------------
+using Posting = map<int, int>;                   
+using InvertedIndex = unordered_map<string, Posting>; 
+
+// ---------------------
+// B-Tree (educational, safe)
+// minimum degree t (t >= 2). Node holds up to 2*t-1 keys.
+// ---------------------
+struct BNode {
+    bool leaf;
+    vector<string> keys;
+    vector<BNode*> child;
+    BNode(bool leaf = false) : leaf(leaf) {}
+};
+
+class BTree {
+public:
+    BTree(int degree = 2) : t(degree) {
+        root = new BNode(true);
+    }
+
+    ~BTree() { freeNode(root); }
+
+    BNode* getRoot() const {
+        return root;
+    }
+
+    // insert (no duplicates)
+    void insert(const string& k) {
+        if (k.empty()) return;
+        if (contains(k)) return;
+        BNode* r = root;
+        if ((int)r->keys.size() == 2 * t - 1) {
+            BNode* s = new BNode(false);
+            s->child.push_back(r);
+            root = s;
+            splitChild(s, 0, r);
+            insertNonFull(s, k);
+        }
+        else {
+            insertNonFull(r, k);
+        }
+    }
+
+    bool contains(const string& k) const {
+        return searchNode(root, k);
+    }
+
+    // inorder traversal -> sorted keys
+    vector<string> get_sorted_keys() {
+        vector<string> out;
+        inorderNode(root, out);
+        return out;
+    }
+
+    // Level-order print (Model 1)
+    void printLevelOrder(ostream& os = cout) {
+        os << "\n================ B-TREE LEVEL-ORDER ================\n\n";
+        if (!root) { os << "(empty)\n"; return; }
+        queue<pair<BNode*, int>> q;
+        q.push(make_pair(root, 0));
+        int currentLevel = 0;
+        os << "Level 0:\n";
+        while (!q.empty()) {
+            pair<BNode*, int> p = q.front(); q.pop();
+            BNode* node = p.first;
+            int lvl = p.second;
+            if (lvl > currentLevel) {
+                currentLevel = lvl;
+                os << "\nLevel " << currentLevel << ":\n";
+            }
+            os << "  [ ";
+            for (size_t i = 0; i < node->keys.size(); ++i) {
+                os << node->keys[i];
+                if (i + 1 < node->keys.size()) os << " | ";
+            }
+            os << " ]\n";
+            if (!node->leaf) {
+                for (BNode* ch : node->child) q.push(make_pair(ch, lvl + 1));
+            }
+        }
+        os << "\n";
+    }
+
+private:
+    int t;
+    BNode* root;
+
+    void freeNode(BNode* n) {
+        if (!n) return;
+        for (BNode* c : n->child) freeNode(c);
+        delete n;
+    }
+
+    bool searchNode(BNode* x, const string& k) const {
+        if (!x) return false;
+        int i = 0;
+        while (i < (int)x->keys.size() && k > x->keys[i]) ++i;
+        if (i < (int)x->keys.size() && k == x->keys[i]) return true;
+        if (x->leaf) return false;
+        // safety: ensure child index valid
+        if (i < 0) i = 0;
+        if (i > (int)x->child.size()) i = (int)x->child.size();
+        return searchNode(x->child[i], k);
+    }
+
+    void inorderNode(BNode* x, vector<string>& out) {
+        if (!x) return;
+        int n = (int)x->keys.size();
+        if (x->leaf) {
+            for (int i = 0; i < n; i++) out.push_back(x->keys[i]);
+        }
+        else {
+            for (int i = 0; i < n; i++) {
+                inorderNode(x->child[i], out);
+                out.push_back(x->keys[i]);
+            }
+            inorderNode(x->child[n], out);
+        }
+    }
+
+    void splitChild(BNode* parent, int i, BNode* y) {
+        // Preconditions: y is full (size == 2*t-1)
+        // Save median BEFORE changing y
+        int mid = t - 1;
+        string midKey = y->keys[mid];
+
+        BNode* z = new BNode(y->leaf);
+
+        // move keys mid+1 .. end to z
+        for (int j = mid + 1; j < (int)y->keys.size(); ++j) z->keys.push_back(y->keys[j]);
+
+        // if not leaf, move children as well
+        if (!y->leaf) {
+            for (int j = mid + 1; j < (int)y->child.size(); ++j) z->child.push_back(y->child[j]);
+        }
+
+        // resize y to keep left half
+        y->keys.resize(mid);
+        if (!y->leaf) y->child.resize(mid + 1);
+
+        // insert z into parent's children and midKey into parent's keys
+        parent->child.insert(parent->child.begin() + i + 1, z);
+        parent->keys.insert(parent->keys.begin() + i, midKey);
+    }
+
+    void insertNonFull(BNode* x, const string& k) {
+        int i = (int)x->keys.size() - 1;
+        if (x->leaf) {
+            x->keys.push_back(string());
+            while (i >= 0 && k < x->keys[i]) {
+                x->keys[i + 1] = x->keys[i];
+                --i;
+            }
+            x->keys[i + 1] = k;
+        }
+        else {
+            while (i >= 0 && k < x->keys[i]) --i;
+            ++i;
+            // safety: clamp child index
+            if (i < 0) i = 0;
+            if (i > (int)x->child.size() - 1) i = (int)x->child.size() - 1;
+
+            if ((int)x->child[i]->keys.size() == 2 * t - 1) {
+                splitChild(x, i, x->child[i]);
+                if (k > x->keys[i]) ++i;
+            }
+            insertNonFull(x->child[i], k);
+        }
+    }
+};
+
+void printASCII(BNode* node, string prefix = "", bool isLast = true) {
+    if (!node) return;
+
+    cout << prefix;
+    if (isLast)
+        cout << "\\-- ";
+    else
+        cout << "+-- ";
+
+    cout << "[ ";
+    for (size_t i = 0; i < node->keys.size(); i++) {
+        cout << node->keys[i];
+        if (i + 1 < node->keys.size()) cout << ", ";
+    }
+    cout << " ]\n";
+
+    prefix += (isLast ? "    " : "|   ");
+
+    for (size_t i = 0; i < node->child.size(); i++) {
+        printASCII(node->child[i], prefix, i + 1 == node->child.size());
+    }
+}
+
+
+// ---------------------
+// Helper: print postings
+// ---------------------
+void print_posting(const string& term, const Posting& p) {
+    cout << term << " -> [ ";
+    bool first = true;
+    for (auto& kv : p) {
+        if (!first) cout << ", ";
+        cout << "(doc=" << kv.first << ", tf=" << kv.second << ")";
+        first = false;
+    }
+    cout << " ]\n";
+}
+
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    vector<string> files = {
+        "C:/Users/attar/source/repos/invertedIndex/x64/Debug/data/document1.txt",
+        "C:/Users/attar/source/repos/invertedIndex/x64/Debug/data/document2.txt",
+        "C:/Users/attar/source/repos/invertedIndex/x64/Debug/data/document3.txt"
+    };
+
+    InvertedIndex index;
+    int docs_read = 0;
+
+    cout << "Reading documents...\n";
+
+    for (size_t i = 0; i < files.size(); ++i) {
+        const string& path = files[i];
+        ifstream fin(path);
+        if (!fin.is_open()) {
+            cerr << "❌ Cannot open file: " << path << "\n";
+            continue;
+        }
+        ++docs_read;
+
+        int docID = (int)i + 1;
+        string line;
+        while (getline(fin, line)) {
+            vector<string> toks = tokenize(line);
+            for (string tok : toks) {
+                string stemmed = simple_stem(tok);
+                if (stemmed.empty()) continue;
+                index[stemmed][docID] += 1;
+            }
+        }
+        fin.close();
+    }
+
+    if (docs_read == 0) {
+        cerr << "No documents read. Exiting.\n";
+        return 1;
+    }
+
+    // ---------------------------
+    // Build B-Tree dictionary
+    // ---------------------------
+    BTree dict(2);
+    for (auto& kv : index) dict.insert(kv.first);
+
+    // ---------------------------
+    // Print sorted Inverted index
+    // ---------------------------
+    cout << "\n=================== Inverted Index (alphabetical, TF) ===================\n\n";
+    vector<string> terms = dict.get_sorted_keys();
+    for (auto& term : terms) {
+        print_posting(term, index[term]);
+    }
+
+    cout << "\nIndexed " << terms.size() << " terms across " << docs_read << " documents.\n";
+    cout << "\n=== B-TREE ASCII ART ===\n";
+    printASCII(dict.getRoot());
+    cout << "\n";
+
+    // ---------------------------
+    // Optional level-order printing
+    // ---------------------------
+    dict.printLevelOrder();
+
+    cout << "\nIndexing completed!\n";
+    return 0;
+}
+
