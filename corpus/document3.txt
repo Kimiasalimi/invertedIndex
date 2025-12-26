@@ -1,0 +1,4 @@
+Modern search systems rely on ranking algorithms to determine the importance
+of documents with respect to a user query. Techniques such as TF IDF and BM25
+are commonly used to compute relevance scores. These methods go beyond simple
+boolean matching and provide better search results.

@@ -1,0 +1,5 @@
+Information retrieval is a fundamental area in computer science that focuses
+on finding relevant information from large collections of documents.
+Modern information retrieval systems use different models such as
+the boolean model, vector space model, and probabilistic models.
+These systems are widely used in search engines and digital libraries.

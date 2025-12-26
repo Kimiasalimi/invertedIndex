@@ -1,0 +1,4 @@
+Inverted index is one of the most important data structures in information
+retrieval systems. It maps each term to the list of documents that contain it.
+By using an inverted index, search engines can efficiently answer user queries
+even when the document collection becomes very large.
