@@ -1,0 +1,130 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
+
+using namespace std;
+
+/* ---------- Tokenizer ---------- */
+vector<string> tokenize(const string& text) {
+    vector<string> tokens;
+    string token;
+
+    for (unsigned char c : text) {
+        if (isalnum(c)) {
+            token.push_back(tolower(c));
+        }
+        else {
+            if (!token.empty()) {
+                tokens.push_back(token);
+                token.clear();
+            }
+        }
+    }
+
+    if (!token.empty())
+        tokens.push_back(token);
+
+    return tokens;
+}
+
+/* ---------- Inverted Index ---------- */
+using Posting = unordered_map<int, int>;   // docID -> tf
+using InvertedIndex = unordered_map<string, Posting>;
+
+/* ---------- Vector Space (TF-IDF) ---------- */
+vector<pair<int, double>> vectorSpace(
+    const vector<string>& query,
+    InvertedIndex& index,
+    int totalDocs)
+{
+    unordered_map<int, double> score;
+
+    // محاسبه TF-IDF
+    for (const auto& term : query) {
+        if (!index.count(term)) continue;
+
+        double idf = log((double)totalDocs / index[term].size());
+
+        for (auto& p : index[term]) {
+            int docID = p.first;
+            int tf = p.second;
+            score[docID] += tf * idf;
+        }
+    }
+
+    // اضافه کردن داکیومنت‌هایی که اسکور ندارن (score = 0)
+    for (int docID = 1; docID <= totalDocs; docID++) {
+        if (!score.count(docID))
+            score[docID] = 0.0;
+    }
+
+    vector<pair<int, double>> ranked(score.begin(), score.end());
+
+    sort(ranked.begin(), ranked.end(),
+        [](const pair<int, double>& a,
+            const pair<int, double>& b) {
+                return a.second > b.second;
+        });
+
+    return ranked;
+}
+
+int main() {
+    vector<string> files = {
+        "C:/Users/attar/source/repos/IR_Project/x64/Debug/corpus/document1.txt",
+        "C:/Users/attar/source/repos/IR_Project/x64/Debug/corpus/document2.txt",
+        "C:/Users/attar/source/repos/IR_Project/x64/Debug/corpus/document3.txt"
+    };
+
+    InvertedIndex index;
+    int docsRead = 0;
+
+    cout << "Reading documents...\n";
+
+    for (size_t i = 0; i < files.size(); i++) {
+        ifstream fin(files[i]);
+        if (!fin.is_open()) {
+            cerr << "❌ Cannot open file: " << files[i] << endl;
+            continue;
+        }
+
+        docsRead++;
+        int docID = (int)i + 1;
+        string line;
+
+        while (getline(fin, line)) {
+            vector<string> tokens = tokenize(line);
+            for (const auto& tok : tokens) {
+                index[tok][docID]++;
+            }
+        }
+
+        fin.close();
+    }
+
+    if (docsRead == 0) {
+        cerr << "No documents loaded.\n";
+        return 1;
+    }
+
+    // کوئری نمونه
+    vector<string> query = { "information", "retrieval" };
+
+    cout << "\nSearch Results:\n";
+
+    auto results = vectorSpace(query, index, docsRead);
+
+    for (auto& r : results) {
+        cout << "Doc " << r.first
+            << " | Score: "
+            << fixed << setprecision(3)
+            << r.second << endl;
+    }
+
+    return 0;
+}
